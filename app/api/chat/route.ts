@@ -1,27 +1,84 @@
-import { NextRequest } from "next/server";
+import { getCurrentUserId } from '@/lib/auth/get-current-user'
+import { createManualToolStreamResponse } from '@/lib/streaming/create-manual-tool-stream'
+import { createToolCallingStreamResponse } from '@/lib/streaming/create-tool-calling-stream'
+import { Model } from '@/lib/types/models'
+import { isProviderEnabled } from '@/lib/utils/registry'
+import { cookies } from 'next/headers'
 
-export async function POST(req: NextRequest) {
-  const { messages } = await req.json();
+export const maxDuration = 30
 
-  const groqStream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": "Bearer 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",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "mixtral-8x7b-32768",
-      messages,
-      temperature: 0.7,
-      stream: true
-    }),
-  });
+const DEFAULT_MODEL: Model = {
+  id: 'gpt-4o-mini',
+  name: 'GPT-4o mini',
+  provider: 'OpenAI',
+  providerId: 'openai',
+  enabled: true,
+  toolCallType: 'native'
+}
 
-  return new Response(groqStream.body, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
+export async function POST(req: Request) {
+  try {
+    const { messages, id: chatId } = await req.json()
+    const referer = req.headers.get('referer')
+    const isSharePage = referer?.includes('/share/')
+    const userId = await getCurrentUserId()
+
+    if (isSharePage) {
+      return new Response('Chat API is not available on share pages', {
+        status: 403,
+        statusText: 'Forbidden'
+      })
     }
-  });
+
+    const cookieStore = await cookies()
+    const modelJson = cookieStore.get('selectedModel')?.value
+    const searchMode = cookieStore.get('search-mode')?.value === 'true'
+
+    let selectedModel = DEFAULT_MODEL
+
+    if (modelJson) {
+      try {
+        selectedModel = JSON.parse(modelJson) as Model
+      } catch (e) {
+        console.error('Failed to parse selected model:', e)
+      }
+    }
+
+    if (
+      !isProviderEnabled(selectedModel.providerId) ||
+      selectedModel.enabled === false
+    ) {
+      return new Response(
+        `Selected provider is not enabled ${selectedModel.providerId}`,
+        {
+          status: 404,
+          statusText: 'Not Found'
+        }
+      )
+    }
+
+    const supportsToolCalling = selectedModel.toolCallType === 'native'
+
+    return supportsToolCalling
+      ? createToolCallingStreamResponse({
+          messages,
+          model: selectedModel,
+          chatId,
+          searchMode,
+          userId
+        })
+      : createManualToolStreamResponse({
+          messages,
+          model: selectedModel,
+          chatId,
+          searchMode,
+          userId
+        })
+  } catch (error) {
+    console.error('API route error:', error)
+    return new Response('Error processing your request', {
+      status: 500,
+      statusText: 'Internal Server Error'
+    })
+  }
 }
