@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
   const { messages } = await req.json();
@@ -18,22 +17,20 @@ export async function POST(req: NextRequest) {
     }),
   });
 
-  const json = await groqRes.json();
+  const data = await groqRes.json();
 
-  const fullText = json.choices?.[0]?.message?.content ?? "No response";
+  const fullText = data?.choices?.[0]?.message?.content ?? "";
 
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     start(controller) {
-      // Split text into words so we can fake streaming
-      const words = fullText.split(" ");
-
-      for (let word of words) {
+      // Break into character chunks instead of words
+      for (let char of fullText) {
         const chunk = {
           choices: [
             {
-              delta: { content: word + " " }
+              delta: { content: char }
             }
           ]
         };
@@ -41,8 +38,7 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
       }
 
-      // Send done message
-      controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       controller.close();
     }
   });
@@ -51,7 +47,7 @@ export async function POST(req: NextRequest) {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      Connection: "keep-alive",
+      "Connection": "keep-alive",
     }
   });
 }
