@@ -7,27 +7,42 @@ export async function POST(req: NextRequest) {
   const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
-      "Authorization": "Bearer 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", // replace this
+      "Authorization": "Bearer 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",
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
       model: "mixtral-8x7b-32768",
       messages,
       temperature: 0.7,
-      stream: false // 👈 we set stream to false so we get full response
+      stream: false
     }),
   });
 
   const json = await groqRes.json();
 
-  // Groq returns full response. Morphic expects a stream.
-  // So we simulate a stream by turning it into a fake stream-like format.
-  const reply = json.choices?.[0]?.message?.content ?? "No response";
+  const fullText = json.choices?.[0]?.message?.content ?? "No response";
 
   const encoder = new TextEncoder();
+
   const stream = new ReadableStream({
     start(controller) {
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: reply })}\n\n`));
+      // Split text into words so we can fake streaming
+      const words = fullText.split(" ");
+
+      for (let word of words) {
+        const chunk = {
+          choices: [
+            {
+              delta: { content: word + " " }
+            }
+          ]
+        };
+
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      }
+
+      // Send done message
+      controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
       controller.close();
     }
   });
